@@ -59,6 +59,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    print('📱 App lifecycle state: $state');
+
+    // QUAN TRỌNG: Cập nhật app state cho face detection service
+    _faceDetectionService.updateAppState(state);
+
     switch (state) {
       case AppLifecycleState.resumed:
         _onAppResumed();
@@ -108,14 +113,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   void _onAppResumed() {
     if (_isMonitoring) {
+      print('🔄 App resumed - Restarting face detection');
       _faceDetectionService.startFaceDetection();
     }
   }
 
   void _onAppPaused() {
-    // Vẫn giữ audio service chạy trong background
     if (_isMonitoring) {
+      print('⏸️ App paused - Keeping audio service running');
       _audioService.startSilentAudio();
+      // Face detection vẫn chạy với background logic
     }
   }
 
@@ -127,9 +134,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     await _audioService.startSilentAudio();
     await _faceDetectionService.startFaceDetection();
     await _backgroundFetchService.startBackgroundFetch();
-    await WakelockPlus.enable(); // Giữ màn hình thức (nếu cần)
+    await WakelockPlus.enable();
 
-    print('Monitoring started');
+    print('Monitoring started - Will work in background');
   }
 
   Future<void> _stopMonitoring() async {
@@ -147,6 +154,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _showWarningDialog() {
+    // Chỉ hiển thị khi app ở foreground
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -222,7 +234,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               LinearProgressIndicator(),
               SizedBox(height: 10),
               Text(
-                'App đang chạy ẩn trong nền\nKhông tắt app để tiếp tục giám sát',
+                'App đang chạy ẩn trong nền\nFace detection hoạt động khi có thể',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),

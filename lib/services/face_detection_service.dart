@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/widgets.dart'; // THÊM DÒNG NÀY
 
 class FaceDetectionService {
   static final FaceDetectionService _instance =
@@ -19,13 +20,17 @@ class FaceDetectionService {
 
   // Biến đếm số lần phát hiện khuôn mặt liên tiếp
   int _faceDetectionCount = 0;
-  static const int _warningThreshold =
-      2; // Cảnh báo sau 2 lần phát hiện (khoảng 10 giây)
+  static const int _warningThreshold = 2;
   DateTime? _lastFaceDetectionTime;
 
   // Biến để tránh cảnh báo liên tục sau khi đã cảnh báo
   DateTime? _lastWarningTime;
   static const Duration _warningCooldown = Duration(seconds: 30);
+
+  // Biến lưu trạng thái app
+  AppLifecycleState _currentAppState = AppLifecycleState.resumed; // ĐÃ SỬA
+  bool _lastFaceDetectedState = false;
+  DateTime? _lastForegroundDetectionTime;
 
   Function(bool)? onFaceDetected;
 
@@ -68,10 +73,10 @@ class FaceDetectionService {
 
     await _notifications.initialize(settings);
 
-    // Tạo notification channel cho Android
     await _notifications
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(
           const AndroidNotificationChannel(
             'driving_safety_channel',
@@ -82,11 +87,47 @@ class FaceDetectionService {
         );
   }
 
+  // Phương thức mới: Cập nhật trạng thái app
+  void updateAppState(AppLifecycleState state) {
+    // ĐÃ SỬA
+    _currentAppState = state;
+    print('🔄 App state changed to: $state');
+
+    if (state == AppLifecycleState.resumed) {
+      // ĐÃ SỬA
+      print('🎯 App resumed - Camera ready for detection');
+      // Khởi tạo lại camera khi app trở lại foreground
+      _initializeCameraIfNeeded();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      // ĐÃ SỬA
+      print('⏸️ App in background - Disposing camera');
+      _disposeCamera();
+    }
+  }
+
+  Future<void> _initializeCameraIfNeeded() async {
+    if (!_cameraController.value.isInitialized && _isDetecting) {
+      await _setupCamera();
+    }
+  }
+
+  Future<void> _disposeCamera() async {
+    try {
+      if (_cameraController.value.isInitialized) {
+        await _cameraController.dispose();
+        print('📷 Camera disposed');
+      }
+    } catch (e) {
+      print('Error disposing camera: $e');
+    }
+  }
+
   Future<void> startFaceDetection() async {
     if (_isDetecting) return;
 
     _isDetecting = true;
-    _resetDetectionCount(); // Reset biến đếm khi bắt đầu
+    _resetDetectionCount();
 
     // Bắt đầu detection mỗi 5 giây
     _detectionTimer = Timer.periodic(Duration(seconds: 5), (timer) async {
@@ -100,11 +141,8 @@ class FaceDetectionService {
     _detectionTimer?.cancel();
     _detectionTimer = null;
     _isDetecting = false;
-    _resetDetectionCount(); // Reset biến đếm khi dừng
-
-    if (_cameraController.value.isInitialized) {
-      await _cameraController.dispose();
-    }
+    _resetDetectionCount();
+    await _disposeCamera();
 
     print('Face detection stopped');
   }
@@ -117,17 +155,32 @@ class FaceDetectionService {
 
   Future<void> _performFaceDetection() async {
     try {
-      if (!_cameraController.value.isInitialized) {
-        await _setupCamera();
+      // KIỂM TRA APP STATE - QUAN TRỌNG
+      if (_currentAppState != AppLifecycleState.resumed) {
+        // ĐÃ SỬA
+        print('📱 App in background - Using background detection logic');
+        await _backgroundDetectionLogic();
         return;
       }
 
+      // APP ĐANG Ở FOREGROUND - CHẠY DETECTION THẬT
+      if (!_cameraController.value.isInitialized) {
+        await _setupCamera();
+        if (!_cameraController.value.isInitialized) {
+          return;
+        }
+      }
+
+      print('🔍 Performing REAL face detection in foreground');
       final XFile imageFile = await _cameraController.takePicture();
       final inputImage = InputImage.fromFilePath(imageFile.path);
 
       final List<Face> faces = await _faceDetector.processImage(inputImage);
-
       final faceDetected = faces.isNotEmpty;
+
+      // Lưu trạng thái cho background detection
+      _lastFaceDetectedState = faceDetected;
+      _lastForegroundDetectionTime = DateTime.now();
 
       // Gọi callback
       onFaceDetected?.call(faceDetected);
@@ -135,7 +188,6 @@ class FaceDetectionService {
       if (faceDetected) {
         await _handleFaceDetected();
       } else {
-        // Nếu không phát hiện khuôn mặt, reset biến đếm
         _resetDetectionCount();
       }
 
@@ -146,7 +198,31 @@ class FaceDetectionService {
         print('Error deleting temp file: $e');
       }
     } catch (e) {
-      print('Error in face detection: $e');
+      print('❌ Error in face detection: $e');
+      // Nếu lỗi camera, dispose và thử lại sau
+      if (e is CameraException) {
+        await _disposeCamera();
+      }
+    }
+  }
+
+  // LOGIC DETECTION TRONG BACKGROUND
+  Future<void> _backgroundDetectionLogic() async {
+    final now = DateTime.now();
+
+    // Nếu vừa mới có face detected ở foreground, tiếp tục đếm
+    if (_lastFaceDetectedState &&
+        _lastForegroundDetectionTime != null &&
+        now.difference(_lastForegroundDetectionTime!) < Duration(seconds: 10)) {
+      _faceDetectionCount++;
+      print('🔮 Background detection - Predictive count: $_faceDetectionCount');
+
+      if (_faceDetectionCount >= _warningThreshold) {
+        await _triggerWarning();
+      }
+    } else {
+      // Reset nếu đã lâu không có detection
+      _resetDetectionCount();
     }
   }
 
@@ -196,19 +272,17 @@ class FaceDetectionService {
   }
 
   Future<void> _sendWarningNotification() async {
-    // Sửa lỗi constant expression - tạo AndroidNotificationDetails mà không dùng Color
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-      'driving_safety_channel',
-      'Cảnh báo an toàn lái xe',
-      channelDescription:
-          'Thông báo khi phát hiện sử dụng điện thoại khi lái xe',
-      importance: Importance.high,
-      priority: Priority.high,
-      playSound: true,
-      enableVibration: true,
-      // Bỏ colorized và color để tránh lỗi constant expression
-    );
+          'driving_safety_channel',
+          'Cảnh báo an toàn lái xe',
+          channelDescription:
+              'Thông báo khi phát hiện sử dụng điện thoại khi lái xe',
+          importance: Importance.high,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+        );
 
     const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
       presentAlert: true,
@@ -237,6 +311,7 @@ class FaceDetectionService {
       'type': 'continuous_face_detected_while_driving',
       'detection_count': _faceDetectionCount,
       'warning_sent': true,
+      'app_state': _currentAppState.toString(),
     };
 
     print('📝 Driving warning event logged: $event');
@@ -244,11 +319,7 @@ class FaceDetectionService {
 
   void dispose() {
     _detectionTimer?.cancel();
-    try {
-      _cameraController.dispose();
-    } catch (e) {
-      print('Error disposing camera: $e');
-    }
+    _disposeCamera();
     _faceDetector.close();
   }
 }
