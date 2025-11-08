@@ -1,0 +1,13 @@
+<key>UIBackgroundModes</key>
+<array>
+    <string>audio</string>
+    <string>fetch</string>
+    <string>processing</string>
+</array>
+
+<key>NSCameraUsageDescription</key>
+<string>App cần camera để phát hiện khuôn mặt khi lái xe</string>
+<key>NSFaceIDUsageDescription</key>
+<string>App cần quyền truy cập Face ID để phát hiện khuôn mặt</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>App cần microphone để phát audio nền</string>

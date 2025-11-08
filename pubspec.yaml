@@ -1,0 +1,38 @@
+name: driving_safety_detector
+description: "Flutter app for detecting phone usage while driving"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Âm thanh
+  audio_service: ^0.18.10
+  just_audio: ^0.9.37
+  audioplayers: ^6.1.0
+
+  # Camera & ML Kit (đã chỉnh tương thích)
+  camera: ^0.11.0+1
+  google_ml_kit: ^0.20.0
+
+  # Thông báo, nền, quyền truy cập
+  flutter_local_notifications: ^17.1.2
+  background_fetch: ^1.2.0
+  permission_handler: ^11.3.0
+  wakelock_plus: ^1.2.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/audio/silent.wav
